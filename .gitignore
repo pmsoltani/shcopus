@@ -39,3 +39,4 @@ Thumbs.db
 # Specific Exclusions #
 #######################
 papers.db
+config.json
