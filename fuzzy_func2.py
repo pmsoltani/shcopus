@@ -119,6 +119,14 @@ sharif_depts = {
     'Languages and Linguistics Center': 'Lang',
     'Sharif Upstream Petroleum Research Institute (SUPRI)': 'Supri',
     'Sharif Upstream Petroleum Research Institute': 'Supri',
+    'Design, Robotics, and Automation Center of Excellence (CEDRA)': 'CEDRA',
+    'Design, Robotics, and Automation Center of Excellence': 'CEDRA',
+    'Power System Management & Control Center of Excellence (CEPSMC)': 'CEPSMC',
+    'Power System Management & Control Center of Excellence': 'CEPSMC',
+    'Hydrodynamics & Dynamic of Marine Vehicles Center of Excellence (CEHDMV)': 'CEHDMV',
+    'Hydrodynamics & Dynamic of Marine Vehicles Center of Excellence': 'CEHDMV',
+    'Energy Conversion Center of Excellence (CEEC)': 'CEEC',
+    'Energy Conversion Center of Excellence': 'CEEC',
 }
 
 dept_strings = [
@@ -248,36 +256,31 @@ def aut_dept(
     affils: list, dept_strings: list, sharif_depts: dict,
     cutoff: int, keyword: str = 'sharif'):
 
+    # if 'sharif' in any affiliation, aut is Sharifi
+    # we can also check to see whether aut's other affils are sharif or not
     sharif = False
-    depts = []
+    depts = OrderedDict()
     
     keyword = keyword.lower()
-    for affil in affils:
+    for cnt, affil in enumerate(affils):
+        depts[cnt] = {'sharif': False, 'dept': ()}
         if in_list(keyword, affil, 'any'):
             sharif = True
+            depts[cnt]['sharif'] = True
             for elem in affil:
                 if any(item in elem.lower() for item in dept_strings):
-                    depts.append(
-                        process.extractOne(
-                            elem.strip(),
-                            list(sharif_depts.keys()),
-                            score_cutoff=cutoff
-                        )
+                    depts[cnt]['dept'] = process.extractOne(
+                        elem.strip(),
+                        list(sharif_depts.keys()),
+                        score_cutoff=cutoff
                     )
                     break
-    if sharif:
-        depts = list(
-            filter(lambda item: item, depts)
-        )
-        if not depts:
-            depts = 'NOT FOUND'
+            if depts[cnt]['dept']:
+                depts[cnt]['dept'] = sharif_depts[depts[cnt]['dept'][0]]
+            else:
+                depts[cnt]['dept'] = 'NOT FOUND'
         else:
-            depts = list(
-                map(
-                    lambda item: sharif_depts[item[0]],
-                    depts
-                )
-            )
+            depts[cnt]['dept'] = 'NOT SHARIF'
     return [sharif, depts]
 
 
@@ -307,9 +310,10 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
         for cnt, aut in enumerate(auts_affils):
             temp[cnt] = {
                 'name_address': aut, 'affils': [],
-                'sharif': False, 'faculty': False, 'sharif_id': '', 'dept': [],
-                'scopus_id': i['auts_id'][cnt], 'duo_affil': False,
-                'countries': [], 'foreign': False, 'foreigner': False,
+                'sharif': False, 'faculty': False, 'sharif_id': '',
+                'dept': OrderedDict(), 'scopus_id': i['auts_id'][cnt],
+                'duo_affil': False, 'countries': [],
+                'foreign': False, 'foreigner': False,
             }
 
             aut_split = splitter(aut.lower(), ',', out_type='list')
@@ -331,13 +335,13 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
                     sharif_depts, cutoff, 'sharif'
                 )
             if temp[cnt]['sharif']:
-                if temp[cnt]['countries'] == ['IR', 'IR'] and len(temp[cnt]['dept']) <= 1:
-                    print(f"{aut_split[0]}\t\t{temp[cnt]['dept']}\t{temp[cnt]['countries']}\t{i['doi']}")
-                    print('-----------')
-                elif temp[cnt]['dept'] == 'NOT FOUND':
-                    print(f"{temp[cnt]['countries']}\t{i['doi']}")
-                    print(f"{aut}")
-                    print('===========')
+                for dept in temp[cnt]['dept']:
+                    if temp[cnt]['dept'][dept]['dept'] == 'NOT FOUND':
+                        print(f"{temp[cnt]['countries']}\t{i['doi']}")
+                        print(temp[cnt]['dept'])
+                        print()
+                        print(f"{aut}")
+                        print('===========')
         i['auts_affils'] = temp
 
     db_handler(db_name, close=True)
