@@ -369,14 +369,6 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
                     print(i['doi'])
                     print(i_last)
                     print('***************')
-
-            #     for dept in temp[cnt]['depts']:
-            #         if dept['dept'] == 'NOT SHARIF':
-            #             print(f"{temp[cnt]['countries']}\t{i['doi']}")
-            #             print(temp[cnt]['depts'])
-            #             print()
-            #             print(f"{aut}")
-            #             print('===========')
         i['auts_affils'] = temp
 
     db_handler(db_name, close=True)
