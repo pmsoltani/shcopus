@@ -127,6 +127,8 @@ sharif_depts = {
     'Hydrodynamics & Dynamic of Marine Vehicles Center of Excellence': 'CEHDMV',
     'Energy Conversion Center of Excellence (CEEC)': 'CEEC',
     'Energy Conversion Center of Excellence': 'CEEC',
+    'Complex Systems and Condensed Matter Center of Excellence (CSCM)': 'CSCM',
+    'Complex Systems and Condensed Matter Center of Excellence': 'CSCM',
 }
 
 dept_strings = [
@@ -156,14 +158,11 @@ for file in os.listdir(dataset_directory):
                 reader = csv.DictReader(import_file)
                 for row in reader:
                     datasets[db_name.lower()][row['ID']] = {
-                        'first': row['First English'],
-                        'last': row['Last English'],
-                        'init': row['Initial English'],
-                        'last_init': row['Last English'] + ' ' + row['Initial English'],
-                        'last_i2': row['Last English'] + ' ' + 
-                            row['Initial English']
-                                .replace('.', '').replace(' ', ''),
-                        'dept': row['Dept'],
+                        'first': row['First En'],
+                        'last': row['Last En'],
+                        'init': row['Initial En'],
+                        'i_last': row['Initial En'] + ' ' + row['Last En'],
+                        'depts': row['Dept'],
                         'scopus': [],
                     }
         else:
@@ -189,7 +188,7 @@ def splitter(
     return output
 
 def aut_country (
-    name_address: list, country_data: dict,
+    raw_affil: list, country_data: dict,
     start_idx: int = 2, end_idx: int = None,
     home = 'IR', home_aliases = ['tehran', 'sharif']):
     
@@ -200,13 +199,13 @@ def aut_country (
     affils = []
 
     position = start_idx
-    for cnt, elem in enumerate(name_address[start_idx:end_idx]):
+    for cnt, elem in enumerate(raw_affil[start_idx:end_idx]):
         if in_list(elem, country_data.keys(), 'any'):
             country_idx = in_list(elem, country_data.keys(), 'any', True)[1]
             country_idx = list(country_data.keys())[country_idx]
             countries.append(country_data[country_idx]['id'])
             
-            affils.append(name_address[position:start_idx + cnt + 1])
+            affils.append(raw_affil[position:start_idx + cnt + 1])
             position = start_idx + cnt + 1
 
     if len(countries) > 1:
@@ -220,7 +219,7 @@ def aut_country (
 
     if not countries:
         for alias in home_aliases:
-            if in_list(alias, name_address[start_idx:end_idx], 'any'):
+            if in_list(alias, raw_affil[start_idx:end_idx], 'any'):
                 countries.append(home)
                 break
     if not countries:
@@ -259,30 +258,39 @@ def aut_dept(
     # if 'sharif' in any affiliation, aut is Sharifi
     # we can also check to see whether aut's other affils are sharif or not
     sharif = False
-    depts = OrderedDict()
+    depts = []
     
     keyword = keyword.lower()
     for cnt, affil in enumerate(affils):
-        depts[cnt] = {'sharif': False, 'dept': ()}
+        depts.append({'sharif': False, 'dept': ''})
         if in_list(keyword, affil, 'any'):
             sharif = True
             depts[cnt]['sharif'] = True
             for elem in affil:
                 if any(item in elem.lower() for item in dept_strings):
-                    depts[cnt]['dept'] = process.extractOne(
+                    match = process.extractOne(
                         elem.strip(),
                         list(sharif_depts.keys()),
                         score_cutoff=cutoff
                     )
+                    if match:
+                        depts[cnt]['dept'] = sharif_depts[match[0]]
+                    else:
+                        depts[cnt]['dept'] = 'NOT MATCHED'
                     break
-            if depts[cnt]['dept']:
-                depts[cnt]['dept'] = sharif_depts[depts[cnt]['dept'][0]]
-            else:
+            if not depts[cnt]['dept']:
                 depts[cnt]['dept'] = 'NOT FOUND'
         else:
             depts[cnt]['dept'] = 'NOT SHARIF'
     return [sharif, depts]
 
+def aut_match(query: str, auts_dict: dict, key: str, cutoff: int):
+    auts_list = [auts_dict[k][key] for k in auts_dict]
+    match = process.extractOne(query, auts_list, score_cutoff=cutoff)
+    if match:
+        return [k for k in auts_dict if auts_dict[k][key] == match[0]][0]
+    else:
+        return 'NOT MATCHED'
 
 def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
 
@@ -309,14 +317,15 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
         temp = OrderedDict()
         for cnt, aut in enumerate(auts_affils):
             temp[cnt] = {
-                'name_address': aut, 'affils': [],
-                'sharif': False, 'faculty': False, 'sharif_id': '',
-                'dept': OrderedDict(), 'scopus_id': i['auts_id'][cnt],
+                'raw_affil': aut, 'init': '', 'last': '', 'affils': [],
+                'sharif': False, 'faculty': False, 'sharif_id': [],
+                'depts': [], 'scopus_id': i['auts_id'][cnt],
                 'duo_affil': False, 'countries': [],
                 'foreign': False, 'foreigner': False,
             }
-
+            
             aut_split = splitter(aut.lower(), ',', out_type='list')
+            [temp[cnt]['last'], temp[cnt]['init']] = aut_split[0:2]
 
             [
                 temp[cnt]['countries'],
@@ -329,19 +338,45 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
             if not temp[cnt]['foreigner']:
                 [
                     temp[cnt]['sharif'],
-                    temp[cnt]['dept'],
+                    temp[cnt]['depts'],
                 ] = aut_dept(
                     temp[cnt]['affils'], dept_strings,
                     sharif_depts, cutoff, 'sharif'
                 )
             if temp[cnt]['sharif']:
-                for dept in temp[cnt]['dept']:
-                    if temp[cnt]['dept'][dept]['dept'] == 'NOT FOUND':
-                        print(f"{temp[cnt]['countries']}\t{i['doi']}")
-                        print(temp[cnt]['dept'])
-                        print()
-                        print(f"{aut}")
-                        print('===========')
+                i_last = temp[cnt]['init'] + ' ' + temp[cnt]['last']
+                for dept in temp[cnt]['depts']:
+                    if not 'NOT' in dept['dept']:
+                        auts_dict = {k: v for k, v in datasets['faculties'].items() 
+                            if dept['dept'] in v['depts']}
+                        match = aut_match(i_last, auts_dict, 'i_last', 90)
+                        if match != 'NOT MATCHED':
+                            temp[cnt]['sharif_id'].append(match)
+                if len(set(temp[cnt]['sharif_id'])) == 1:
+                    temp[cnt]['sharif_id'] = temp[cnt]['sharif_id'][0]
+                    temp[cnt]['faculty'] = True
+                    print('MATCHED!')
+                    print(i['doi'])
+                    print(f"{i_last}******{temp[cnt]['sharif_id']}")
+                    print('---------------')
+                elif len(set(temp[cnt]['sharif_id'])) > 1:
+                    print('MULTI')
+                    print(i['doi'])
+                    print(f"{i_last}******{temp[cnt]['sharif_id']}")
+                    print('===============')
+                else:
+                    print("Couldn't Match or NOT FACULTY")
+                    print(i['doi'])
+                    print(i_last)
+                    print('***************')
+
+            #     for dept in temp[cnt]['depts']:
+            #         if dept['dept'] == 'NOT SHARIF':
+            #             print(f"{temp[cnt]['countries']}\t{i['doi']}")
+            #             print(temp[cnt]['depts'])
+            #             print()
+            #             print(f"{aut}")
+            #             print('===========')
         i['auts_affils'] = temp
 
     db_handler(db_name, close=True)
