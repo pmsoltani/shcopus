@@ -163,8 +163,12 @@ for file in os.listdir(dataset_directory):
                         'init': row['Initial En'],
                         'i_last': row['Initial En'] + ' ' + row['Last En'],
                         'depts': row['Dept'],
-                        'scopus': [],
                     }
+                    if row['Scopus']:
+                        print(set(row['Scopus'].split(';')))
+                        datasets[db_name.lower()][row['ID']]['scopus'] = set(row['Scopus'].split(';'))
+                    else:
+                        datasets[db_name.lower()][row['ID']]['scopus'] = set()
         else:
             datasets[db_name.lower()] = []
             with open(os.path.join(dataset_directory, file), encoding='UTF-16') as import_file:
@@ -294,9 +298,9 @@ def aut_match(query: str, auts_dict: dict, key: str, cutoff: int):
 
 def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
 
-    faculties = OrderedDict()
-    for faculty in datasets['faculties'].keys():
-        faculties[faculty] = []
+    # faculties = OrderedDict()
+    # for faculty in datasets['faculties']:
+    #     faculties[faculty] = set()
     
     papers = db_handler(db_name, db_query_aut, year1, year2)
     for counter, i in enumerate(papers):
@@ -355,6 +359,10 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
                 if len(set(temp[cnt]['sharif_id'])) == 1:
                     temp[cnt]['sharif_id'] = temp[cnt]['sharif_id'][0]
                     temp[cnt]['faculty'] = True
+                    
+                    datasets['faculties'][temp[cnt]['sharif_id']]['scopus'].add(i['auts_id'][cnt])
+                    # faculties[temp[cnt]['sharif_id']].add(i['auts_id'][cnt])
+                    
                     print('MATCHED!')
                     print(i['doi'])
                     print(f"{i_last}******{temp[cnt]['sharif_id']}")
@@ -373,8 +381,8 @@ def analyze_auts(db_query_aut, year1, year2, db_name, datasets, cutoff = 80):
 
     db_handler(db_name, close=True)
     
-    # with io.open('test.txt', 'w', encoding = "UTF-16") as tsvfile:
-    #     tsvfile.write('sharif_id\tids')
-    #     for i in faculties:
-    #             exp_text = i + '\t' + ', '.join(faculties[i]) + '\n'
-    #             tsvfile.write(exp_text)
+    with io.open('test.txt', 'w', encoding = "UTF-16") as tsvfile:
+        tsvfile.write('sharif_id\tids\n')
+        for i in datasets['faculties']:
+                exp_text = i + '\t' + ';'.join(set(datasets['faculties'][i]['scopus'])) + '\n'
+                tsvfile.write(exp_text)
