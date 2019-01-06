@@ -425,12 +425,8 @@ def analyze_auts(
                                 v['scopus']
                             )
                         )
-                        print(ids)
-                        print('-----')
                     else:
                         ids = [max(v['scopus'], key=lambda item: v['scopus'][item])]
-                        print(ids)
-                        print('*****')
                     exp_text = k + '\t' + ';'.join([str((item, v['scopus'][item])) for item in ids]) + '\n'
                     ids = []
                 else:
