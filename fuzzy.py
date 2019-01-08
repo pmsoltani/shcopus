@@ -1,15 +1,15 @@
-from fuzzy_func2 import *# analyze_auts, datasets, db_handler
+from fuzzy_func2 import analyze_auts, db_handler, splitter, aut_country, aut_dept, sharif_depts, dept_strings, datasets
 # analyze_auts('', '', 2018, 'papers.db', datasets, 80, True)
 
+import os, csv, io
 from collections import OrderedDict
-import csv
 
 papers = db_handler('papers.db', 'simchi', '', 2018)
 
 db_name = 'Faculties'
 profs = OrderedDict()
 with open(
-    'datasets/' + db_name + '.csv', encoding='UTF-8-sig'
+    os.path.join('datasets', db_name + '.csv'), encoding='UTF-8-sig'
 ) as import_file:
 
     reader = csv.DictReader(import_file)
@@ -32,8 +32,6 @@ with open(
 for p, prof in profs.items():
     if not prof['scopus']:
         continue
-    # for scop in prof['scopus']:
-    #     print(scop)
     for i in papers:
         if type(i['auts_id']) == str:
             i['auts_id'] = splitter(i['auts_id'], ';', out_type='list')
@@ -115,7 +113,6 @@ with io.open('co_aut.txt', 'w', encoding='UTF-16') as tsvfile:
                 prof['first'], prof['last'], prof['init'], prof['i_last'],
                 prof['depts']
             ]
-            print(exp_prof)
             for i, aut in prof['co_auts'].items():
                 exp_list = [
                     i, aut['cnt'], aut['name'], aut['raw_affil'], aut['duo_affil'],
@@ -130,6 +127,7 @@ with io.open('co_aut.txt', 'w', encoding='UTF-16') as tsvfile:
                 exp_list.append(years)
                 exp_list.append(dois)
 
-                exp_text = '\t'.join(exp_prof + exp_list) + '\n'
-                print(exp_text)
+                exp_text = exp_prof + exp_list
+                exp_text = map(lambda item: str(item), exp_text)
+                exp_text = '\t'.join(exp_text) + '\n'
                 tsvfile.write(exp_text)

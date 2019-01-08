@@ -193,7 +193,8 @@ def splitter(
 def aut_country (
     raw_affil: list, country_data: dict,
     start_idx: int = 2, end_idx: int = None,
-    home = 'IR', home_aliases = ['tehran', 'sharif']):
+    home = 'IR', home_aliases = ['tehran', 'sharif'],
+    ignore = ['department', 'university', 'institut', 'center', 'school']):
     
     countries = []
     duo_affil = False
@@ -203,7 +204,14 @@ def aut_country (
 
     position = start_idx
     for cnt, elem in enumerate(raw_affil[start_idx:end_idx]):
-        if in_list(elem, country_data.keys(), 'any'):
+        if (
+            in_list(elem, country_data.keys(), 'any') and
+            all(ign not in elem for ign in ignore) and
+            (
+                elem.lower() in ['usa', 'uk', 'uae'] or
+                len(elem) > 3
+            )
+        ):
             country_idx = in_list(elem, country_data.keys(), 'any', True)[1]
             country_idx = list(country_data.keys())[country_idx]
             countries.append(country_data[country_idx]['id'])
