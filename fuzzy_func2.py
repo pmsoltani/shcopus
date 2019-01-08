@@ -254,7 +254,7 @@ def aut_country (
     if len(countries) > 1:
         multi_affil = True
 
-    if not set(countries) & {home}:
+    if (not set(countries) & {home}) and (set(countries)):
         foreigner = True
         foreign = True
     elif set(countries) - {home}:
