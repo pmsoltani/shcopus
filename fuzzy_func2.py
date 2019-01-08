@@ -162,6 +162,38 @@ def dict_factory(cursor, row):
             dic[col[0]] = row[idx]
     return dic
 
+def db_handler(
+    db_name, db_query_aut: str = '', year1 = '', year2 = 2018,
+    add_keys: list = [], close: bool = False):
+
+    db = '' or sqlite3.connect(db_name)
+    if close:
+        if type(db) == sqlite3.Connection:
+            db.close()
+            return
+    if type(db) == sqlite3.Connection:
+        db.row_factory = dict_factory
+        cursor = db.cursor()
+        if year1 == '':
+            cursor.execute(
+                '''SELECT * FROM papers WHERE Authors LIKE ?''', 
+                ('%' + db_query_aut + '%',)
+            )
+        else:
+            cursor.execute(
+                '''SELECT * FROM papers WHERE 
+                    Year >= cast(? as numeric) AND 
+                    Year <= cast(? as numeric) AND 
+                    Authors LIKE ?''', 
+                (year1, year2, '%' + db_query_aut + '%',)
+            )
+        output = cursor.fetchall()
+        if add_keys:
+            for i in output:
+                for tup in add_keys:
+                    i[tup[0]] = tup[1]
+        return output
+
 def in_list(query, items_list, any_all, idx = False):
     if idx and any_all == 'all':
         return
@@ -197,7 +229,7 @@ def aut_country (
     ignore = ['department', 'university', 'institut', 'center', 'school']):
     
     countries = []
-    duo_affil = False
+    multi_affil = False
     foreigner = False
     foreign = False
     affils = []
@@ -220,7 +252,7 @@ def aut_country (
             position = start_idx + cnt + 1
 
     if len(countries) > 1:
-        duo_affil = True
+        multi_affil = True
 
     if not set(countries) & {home}:
         foreigner = True
@@ -236,7 +268,7 @@ def aut_country (
     if not countries:
         countries.append('NOT FOUND')
     
-    return [countries, duo_affil, foreigner, foreign, affils]
+    return [countries, multi_affil, foreigner, foreign, affils]
 
 def aut_dept(
     affils: list, dept_strings: list, sharif_depts: dict,
@@ -279,32 +311,11 @@ def aut_match(query: str, auts_dict: dict, key: str, cutoff: int):
     else:
         return 'NOT MATCHED'
 
-def db_handler(
-    db_name, db_query_aut: str = '', year1 = '', year2 = 2018,
-    close: bool = False):
-
-    db = '' or sqlite3.connect(db_name)
-    if close:
-        if type(db) == sqlite3.Connection:
-            db.close()
+def corr_aut(corr_address: str, auts, auts_id):
+    if 'email: ' in corr_address.lower():
+        email = corr_address.lower().split('email: ')[0].strip()
+        if email.count('@') == 1 and email.count(' ') == 0 and email.split('@')[1].count('.') >= 1:
             return
-    if type(db) == sqlite3.Connection:
-        db.row_factory = dict_factory
-        cursor = db.cursor()
-        if year1 == '':
-            cursor.execute(
-                '''SELECT * FROM papers WHERE Authors LIKE ?''', 
-                ('%' + db_query_aut + '%',)
-            )
-        else:
-            cursor.execute(
-                '''SELECT * FROM papers WHERE 
-                    Year >= cast(? as numeric) AND 
-                    Year <= cast(? as numeric) AND 
-                    Authors LIKE ?''', 
-                (year1, year2, '%' + db_query_aut + '%',)
-            )
-        return cursor.fetchall()
 
 
 
@@ -341,27 +352,27 @@ def analyze_auts(
         # For each author, we create a template profile and then work our way
         # from outside (Country) to inside (Author's name) by matching strings:
         #
-        # - raw_affil: Authors_with_Affiliations string
-        # - init     : Author's initials
-        # - last     : Author's last name (raw_affil doesn't contain first name)
-        # - sharif   : True if any of an author's affiliations is Sharif
-        # - faculty  : True if the author in datasets['faculties'] (only Sharif)
-        # - sharif_id: Unique ID that Sharif gives its faculty members, used
-        #              here to connect 'faculties' dataset with Scopus data
-        # - depts    : A list of author's affiliated Sharif departments
-        # - scopus_id: Author's ID in Scopus
-        # - duo_affil: True if the author is has more that 1 affiliation
-        # - affils   : A list of all of the author's affiliations
-        # - countries: Each of the author's affils has a country
-        # - foreign  : True if the author has at least 1 foreign affil
-        # - foreigner: True if all of the author's affils are foreign
+        # - raw_affil  : Authors_with_Affiliations string
+        # - init       : Author's initials
+        # - last       : Author's last name (Scopus doesn't contain first name)
+        # - sharif     : True if any of an author's affiliations is Sharif
+        # - faculty    : True if the author in 'faculties' dataset (only Sharif)
+        # - sharif_id  : Unique ID that Sharif gives its faculty members, used
+        #                here to connect 'faculties' dataset with Scopus data
+        # - depts      : A list of author's affiliated Sharif departments
+        # - scopus_id  : Author's ID in Scopus
+        # - multi_affil: True if the author is has more that 1 affiliation
+        # - affils     : A list of all of the author's affiliations
+        # - countries  : Each of the author's affils has a country
+        # - foreign    : True if the author has at least 1 foreign affil
+        # - foreigner  : True if all of the author's affils are foreign
         temp = OrderedDict()
         for cnt, aut in enumerate(auts_affils):
             temp[cnt] = {
                 'raw_affil': aut, 'init': '', 'last': '',
                 'sharif': False, 'faculty': False, 'sharif_id': [], 'depts': [],
                 'scopus_id': i['auts_id'][cnt],
-                'duo_affil': False,  'affils': [], 'countries': [],
+                'multi_affil': False,  'affils': [], 'countries': [],
                 'foreign': False, 'foreigner': False,
             }
             
@@ -371,7 +382,7 @@ def analyze_auts(
             # Matching countries
             [
                 temp[cnt]['countries'],
-                temp[cnt]['duo_affil'],
+                temp[cnt]['multi_affil'],
                 temp[cnt]['foreigner'],
                 temp[cnt]['foreign'],
                 temp[cnt]['affils'],
