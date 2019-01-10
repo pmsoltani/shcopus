@@ -113,22 +113,14 @@ for file in os.listdir(dataset_directory):
                         'init': row['Initial En'],
                         'i_last': row['Initial En'] + ' ' + row['Last En'],
                         'depts': row['Dept'],
+                        'co_auts': {}, 'cnt': 0,
                     }
                     if row['Scopus']:
-                        datasets[db_name.lower()][row['ID']]['scopus'] = set(
-                            row['Scopus'].split(';')
+                        datasets[db_name.lower()][row['ID']]['scopus'] = list(
+                            map(lambda item: eval(item), row['Scopus'].split(';'))
                         )
                     else:
-                        datasets[db_name.lower()][row['ID']]['scopus'] = set()
-        # else:
-        #     datasets[db_name.lower()] = []
-        #     with open(
-        #         os.path.join(dataset_directory, file), encoding='UTF-16'
-        #     ) as import_file:
-
-        #         reader = csv.DictReader(import_file, dialect='excel-tab')
-        #         for row in reader:
-        #             datasets[db_name.lower()].append(row[db_name].lower())
+                        datasets[db_name.lower()][row['ID']]['scopus'] = []
 
 def dict_factory(cursor, row):
     key_map = {
@@ -162,36 +154,35 @@ def dict_factory(cursor, row):
     return dic
 
 def db_handler(
-    db_name, db_query_aut: str = '', year1 = '', year2 = 2018,
-    add_keys: list = [], close: bool = False):
+    db_name: str, db_query_aut: str = '', year1: int = 0, year2: int = 2018,
+    add_keys: list = [], close: bool = False, factory = dict_factory):
 
-    db = '' or sqlite3.connect(db_name)
+    db = sqlite3.connect(db_name)
     if close:
-        if type(db) == sqlite3.Connection:
-            db.close()
-            return
-    if type(db) == sqlite3.Connection:
-        db.row_factory = dict_factory
-        cursor = db.cursor()
-        if year1 == '':
-            cursor.execute(
-                '''SELECT * FROM papers WHERE Authors LIKE ?''', 
-                ('%' + db_query_aut + '%',)
-            )
-        else:
-            cursor.execute(
-                '''SELECT * FROM papers WHERE 
-                    Year >= cast(? as numeric) AND 
-                    Year <= cast(? as numeric) AND 
-                    Authors LIKE ?''', 
-                (year1, year2, '%' + db_query_aut + '%',)
-            )
-        output = cursor.fetchall()
-        if add_keys:
-            for i in output:
-                for tup in add_keys:
-                    i[tup[0]] = tup[1]
-        return output
+        db.close()
+        return
+    
+    db.row_factory = factory
+    cursor = db.cursor()
+    if not year1:
+        cursor.execute(
+            '''SELECT * FROM papers WHERE Authors LIKE ?''', 
+            ('%' + db_query_aut + '%',)
+        )
+    else:
+        cursor.execute(
+            '''SELECT * FROM papers WHERE 
+                Year >= cast(? as numeric) AND 
+                Year <= cast(? as numeric) AND 
+                Authors LIKE ?''', 
+            (year1, year2, '%' + db_query_aut + '%',)
+        )
+    output = cursor.fetchall()
+    if add_keys:
+        for i in output:
+            for tup in add_keys:
+                i[tup[0]] = tup[1]
+    return output
 
 def in_list(query, items_list, any_all, idx = False):
     if idx and any_all == 'all':
@@ -314,7 +305,11 @@ def corr_aut(corr_address: str, auts_affils: list):
     if 'email: ' in corr_address.lower() and ';' in corr_address:
         name = corr_address.split(';')[0]
         email = corr_address.lower().split('email: ')[1].strip()
-        if email.count('@') == 1 and email.count(' ') == 0 and email.split('@')[1].count('.') >= 1:
+        if (
+            email.count('@') == 1 and 
+            email.count(' ') == 0 and 
+            email.split('@')[1].count('.') >= 1
+        ):
             idx = in_list(name, auts_affils, 'any', True)[1]
             return [email, idx]
         else:
@@ -373,27 +368,26 @@ def exp_emails(
                 authors[aut_id]['email'] = corr_email
     if not exp_name:
         return authors
-    
     with io.open(exp_name, 'w', encoding = "UTF-16") as tsvfile:
         tsvfile.write('Scopus ID\tName\tYear\tAffil\tEmail\n')
         for k, v in authors.items():
             exp_text = k + '\t'
             exp_text += ';'.join(v['name']) + '\t' + str(v['year']) + '\t'
             exp_text += v['affil'] + '\t' + v['email'] + '\n'
-
             tsvfile.write(exp_text)
 
-
-
 def analyze_auts(
-    db_query_aut, year1, year2, db_name, datasets,
-    cutoff = 80, new_count = False, filtered_export = True, threshold = 5):
+    db_query_aut: str, year1: int, year2: int, db_name: str, datasets,
+    dept_alias, sharif_depts, cutoff: int = 80, new_count: bool = False,
+    exp_name: str = 'scopus_ids.txt',
+    filtered_export: bool = True, threshold: int = 5):
     
     if new_count:
         for i in datasets['faculties']:
             datasets['faculties'][i]['scopus'] = {}
 
     papers = db_handler(db_name, db_query_aut, year1, year2)
+    db_handler(db_name, close=True)
     for i in papers:
 
         paper_info = paper_check(i)
@@ -486,14 +480,12 @@ def analyze_auts(
                     temp[cnt]['sharif_id'] = 'MULTIPLE MATCHES'
                 else: # Could not match for a faculty
                     temp[cnt]['sharif_id'] = 'NOT MATCHED'
-        
         i['auts_affils'] = temp
-
-    db_handler(db_name, close=True)
     
     # Exporting the results
     if filtered_export:
-        with io.open('scopus_ids_filtered.txt', 'w', encoding='UTF-16') as tsvfile:
+        with io.open(
+            exp_name, 'w', encoding='UTF-16') as tsvfile:
             tsvfile.write('ID\tScopus\n')
             for k, v in datasets['faculties'].items():
                 if v['scopus']:
@@ -509,19 +501,140 @@ def analyze_auts(
                         )
                     else:
                         ids = [max(v['scopus'], key=lambda item: v['scopus'][item])]
-                    exp_text = k + '\t' + ';'.join([str((item, v['scopus'][item])) for item in ids]) + '\n'
+                    exp_text = k + '\t' + ';'.join(
+                        [str((item, v['scopus'][item])) for item in ids]) + '\n'
                     ids = []
                 else:
                     exp_text = k + '\t' + '' + '\n'
                 tsvfile.write(exp_text)
     else:
-        with io.open('scopus_ids_all.txt', 'w', encoding = "UTF-16") as tsvfile:
+        with io.open(exp_name, 'w', encoding = "UTF-16") as tsvfile:
             tsvfile.write('ID\tScopus\n')
             for k, v in datasets['faculties'].items():
                 if v['scopus']:
                     ids = list(v['scopus'].keys())
-                    exp_text = k + '\t' + ';'.join([str((item, v['scopus'][item])) for item in ids]) + '\n'
+                    exp_text = k + '\t' + ';'.join(
+                        [str((item, v['scopus'][item])) for item in ids]) + '\n'
                     ids = []
                 else:
                     exp_text = k + '\t' + '' + '\n'
                 tsvfile.write(exp_text)
+
+def analyze_co_auts(
+    db_query_aut: str, year1: int, year2: int, db_name: str, datasets,
+    dept_alias, sharif_depts, cutoff: int = 80, exp_name: str = 'co_aut.txt'):
+    
+    papers = db_handler(
+        db_name, db_query_aut, year1, year2, add_keys=[('skip', False)])
+    db_handler(db_name, close=True)
+
+    emails = exp_emails(papers, threshold=0, exp_name='')
+
+    for p, prof in datasets['faculties'].items():
+        if not prof['scopus']:
+            continue
+        for i in papers:
+            if i['skip']:
+                continue
+            if type(i['auts_id']) == str:
+                paper_info = paper_check(i)
+                if paper_info:
+                    [i['auts_id'], i['auts_affils']] = paper_info[1:]
+                else:
+                    continue
+
+                temp = OrderedDict()
+                for cnt, aut in enumerate(i['auts_affils']):
+                    temp[cnt] = {
+                        'raw_affil': aut, 'init': '', 'last': '',
+                        'sharif': False, 'depts': [],
+                        'scopus_id': i['auts_id'][cnt],
+                        'multi_affil': False, 'affils': [], 'countries': [],
+                        'foreign': False, 'foreigner': False,
+                    }
+                    aut_split = splitter(aut.lower(), ',', out_type='list')
+                    [temp[cnt]['last'], temp[cnt]['init']] = aut_split[0:2]
+                    [
+                        temp[cnt]['countries'], temp[cnt]['multi_affil'],
+                        temp[cnt]['foreigner'], temp[cnt]['foreign'],
+                        temp[cnt]['affils'],
+                    ] = aut_country(aut_split, datasets['countries'])
+                    if not temp[cnt]['foreigner']:
+                        [
+                            temp[cnt]['sharif'], temp[cnt]['depts'],
+                        ] = aut_dept(
+                            temp[cnt]['affils'], dept_alias,
+                            sharif_depts, cutoff, 'sharif'
+                        )
+                i['auts_affils'] = temp
+            if any(scop[0] in i['auts_id'] for scop in prof['scopus']):
+                co_auts = [
+                    item for item in i['auts_id'] if item not in prof['scopus'][0]
+                ]
+                for aut in co_auts:
+                    idx = i['auts_id'].index(aut)
+                    if aut not in prof['co_auts'].keys():
+                        prof['co_auts'][aut] = {
+                            'cnt': 0,
+                            'name'       : (
+                                i['auts_affils'][idx]['init'] + ' ' +
+                                i['auts_affils'][idx]['last']
+                            ),
+                            'raw_affil'  : i['auts_affils'][idx]['raw_affil'],
+                            'multi_affil': i['auts_affils'][idx]['multi_affil'],
+                            'countries'  : i['auts_affils'][idx]['countries'],
+                            'foreigner'  : i['auts_affils'][idx]['foreigner'],
+                            'foreign'    : i['auts_affils'][idx]['foreign'],
+                            'affils'     : i['auts_affils'][idx]['affils'],
+                            'sharif'     : i['auts_affils'][idx]['sharif'],
+                            'email_year' : '',
+                            'email'      : '',
+                            'papers'     : {},
+                        }
+                    if i['year'] not in prof['co_auts'][aut]['papers'].keys():
+                        prof['co_auts'][aut]['papers'][i['year']] = {
+                            'cnt': 0, 'doi': []
+                        }
+                    prof['cnt'] += 1
+                    prof['co_auts'][aut]['cnt'] += 1
+                    prof['co_auts'][aut]['papers'][i['year']]['cnt'] += 1
+                    prof['co_auts'][aut]['papers'][i['year']]['doi'].append(
+                        i['doi'])
+                    if aut in emails.keys():
+                        prof['co_auts'][aut]['email_year'] = emails[aut]['year']
+                        prof['co_auts'][aut]['email'] = emails[aut]['email']
+
+    with io.open(exp_name, 'w', encoding='UTF-16') as tsvfile:
+        header = [
+            'First', 'Last', 'Init', 'i_last', 'Depts',
+            'co_auts_id', 'Total', 'Name', 'Raw Affil', 'Multi Affil',
+            'Countries', 'Foreigner', 'Foreign Affil', 'Sharif',
+            'email_year', 'Email', 'Years', 'DOIs',
+        ]
+        header = '\t'.join(header) + '\n'
+        tsvfile.write(header)
+        for p, prof in datasets['faculties'].items():
+            if prof['co_auts']:
+                exp_prof = [
+                    prof['first'], prof['last'], prof['init'], prof['i_last'],
+                    prof['depts']
+                ]
+                for i, aut in prof['co_auts'].items():
+                    exp_list = [
+                        i, aut['cnt'], aut['name'], aut['raw_affil'],
+                        aut['multi_affil'], ';'.join(aut['countries']),
+                        aut['foreigner'], aut['foreign'], aut['sharif'],
+                        aut['email_year'], aut['email'],
+                    ]
+                    years = {k: v for k, v in aut['papers'].items()}
+                    dois = [v['doi'] for k, v in years.items()]
+                    dois = ';'.join([item for sublist in dois for item in sublist])
+                    years = ';'.join([str((k, v['cnt'])) for k, v in years.items()])
+
+                    exp_list.append(years)
+                    exp_list.append(dois)
+
+                    exp_text = exp_prof + exp_list
+                    exp_text = map(lambda item: str(item), exp_text)
+                    exp_text = '\t'.join(exp_text) + '\n'
+                    tsvfile.write(exp_text)
