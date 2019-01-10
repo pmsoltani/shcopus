@@ -5,7 +5,6 @@ from collections import OrderedDict
 import sqlite3
 import io
 import os
-from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
 
 # variables, functions, and datasets
@@ -76,7 +75,7 @@ sharif_depts = {
     'Institute of Water and Energy': 'IWE',
 }
 
-dept_strings = [
+dept_alias = [
     'department', 'depatment', 'school', 'faculty', 'nanotechnology institut',
     'institute for nano', 'institution for nano', 'center'
 ]
@@ -143,7 +142,7 @@ def dict_factory(cursor, row):
         'Molecular Sequence Numbers': 'molecular_sequence_numbers',
         'Chemicals/CAS': 'cas', 'Tradenames': 'tradenames',
         'Manufacturers': 'manufacturers', 'Funding Details': 'fund',
-        'References': 'refs', 'Correspondence Address': 'address',
+        'References': 'refs', 'Correspondence Address': 'corr_address',
         'Editors': 'editors', 'Sponsors': 'sponsors', 'Publisher': 'publisher',
         'Conference name': 'conf_name', 'Conference date': 'conf_date',
         'Conference location': 'conf_loc', 'Conference code': 'conf_code',
@@ -271,7 +270,7 @@ def aut_country (
     return [countries, multi_affil, foreigner, foreign, affils]
 
 def aut_dept(
-    affils: list, dept_strings: list, sharif_depts: dict,
+    affils: list, dept_alias: list, sharif_depts: dict,
     cutoff: int, keyword: str = 'sharif'):
 
     # if 'sharif' in any affiliation, aut is Sharifi
@@ -286,7 +285,7 @@ def aut_dept(
             has_keyword = True
             depts[cnt][keyword] = True
             for elem in affil:
-                if any(item in elem.lower() for item in dept_strings):
+                if any(item in elem.lower() for item in dept_alias):
                     match = process.extractOne(
                         elem.strip(),
                         list(sharif_depts.keys()),
@@ -311,11 +310,17 @@ def aut_match(query: str, auts_dict: dict, key: str, cutoff: int):
     else:
         return 'NOT MATCHED'
 
-def corr_aut(corr_address: str, auts, auts_id):
-    if 'email: ' in corr_address.lower():
-        email = corr_address.lower().split('email: ')[0].strip()
+def corr_aut(corr_address: str, auts_affils: list):
+    if 'email: ' in corr_address.lower() and ';' in corr_address:
+        name = corr_address.split(';')[0]
+        email = corr_address.lower().split('email: ')[1].strip()
         if email.count('@') == 1 and email.count(' ') == 0 and email.split('@')[1].count('.') >= 1:
-            return
+            idx = in_list(name, auts_affils, 'any', True)[1]
+            return [email, idx]
+        else:
+            return ['BAD EMAIL', -1]
+    else:
+        return ['NOT FOUND', -1]
 
 
 
@@ -345,6 +350,8 @@ def analyze_auts(
         if len(auts_affils) != len(i['auts_id']):
             continue
         
+        [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
+
         # Scopus as this format for each of the paper's authors:
         #
         # Last Name, Initials, Department, University, City, Country
@@ -374,8 +381,12 @@ def analyze_auts(
                 'scopus_id': i['auts_id'][cnt],
                 'multi_affil': False,  'affils': [], 'countries': [],
                 'foreign': False, 'foreigner': False,
+                'corr_aut': False, 'corr_email': '',
             }
-            
+            if idx == cnt:
+                temp[cnt]['corr_aut'] = True
+                temp[cnt]['corr_email'] = corr_email
+
             aut_split = splitter(aut.lower(), ',', out_type='list')
             [temp[cnt]['last'], temp[cnt]['init']] = aut_split[0:2]
 
@@ -394,7 +405,7 @@ def analyze_auts(
                     temp[cnt]['sharif'],
                     temp[cnt]['depts'],
                 ] = aut_dept(
-                    temp[cnt]['affils'], dept_strings,
+                    temp[cnt]['affils'], dept_alias,
                     sharif_depts, cutoff, 'sharif'
                 )
             
@@ -462,3 +473,56 @@ def analyze_auts(
                 else:
                     exp_text = k + '\t' + '' + '\n'
                 tsvfile.write(exp_text)
+
+def exp_emails(
+    db_name, threshold: int = 0, exp_name: str = 'corr_emails.txt'):
+    
+    if type(db_name) == str:
+        papers = db_handler(db_name, '', '', 2018, add_keys=[('skip', False)])
+        db_handler(db_name, close=True)
+    else:
+        papers = db_name
+    
+    authors = {}
+    for i in papers:
+        # Extracting affiliations, Scopus author ids and author names
+        auts_id = splitter(i['auts_id'], ';')
+        auts = splitter(
+            i['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
+        auts_affils = splitter(i['auts_affils'], ';', out_type='list')
+        
+        # Ignoring papers with too many authors involved!
+        if len(auts) > 30:
+            continue
+        if len(auts) != len(auts_id):
+            continue
+        if len(auts_affils) != len(auts_id):
+            continue
+        year = int(i['year'])
+        if year < threshold:
+            continue
+        
+        [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
+        if idx > -1:
+            aut_id = auts_id[idx]
+            if aut_id not in authors.keys():
+                authors[aut_id] = {
+                    'name': set(), 'year': 0, 'affil': '', 'email': '',
+                }
+            
+            authors[aut_id]['name'].add(auts[idx])
+            if year > authors[aut_id]['year']:
+                authors[aut_id]['year'] = year
+                authors[aut_id]['affil'] = auts_affils[idx]
+                authors[aut_id]['email'] = corr_email
+    if not exp_name:
+        return authors
+    
+    with io.open(exp_name, 'w', encoding = "UTF-16") as tsvfile:
+        tsvfile.write('Scopus ID\tName\tYear\tAffil\tEmail\n')
+        for k, v in authors.items():
+            exp_text = k + '\t'
+            exp_text += ';'.join(v['name']) + '\t' + str(v['year']) + '\t'
+            exp_text += v['affil'] + '\t' + v['email'] + '\n'
+
+            tsvfile.write(exp_text)

@@ -1,10 +1,14 @@
-from fuzzy_func2 import analyze_auts, db_handler, splitter, aut_country, aut_dept, sharif_depts, dept_strings, datasets
-# analyze_auts('', '', 2018, 'papers.db', datasets, 80, True)
+from fuzzy_func2 import analyze_auts, corr_aut, exp_emails, db_handler, splitter, aut_country, aut_dept, sharif_depts, dept_strings, datasets
+# analyze_auts('', 2017, 2017, 'papers.db', datasets, 80, True)
+
 
 import os, csv, io
 from collections import OrderedDict
 
 papers = db_handler('papers.db', '', '', 2018, add_keys=[('skip', False)])
+db_handler('papers.db', close=True)
+
+emails = exp_emails(papers, threshold=0, exp_name='')
 
 db_name = 'Faculties'
 profs = OrderedDict()
@@ -78,6 +82,9 @@ for p, prof in profs.items():
                         sharif_depts, 80, 'sharif'
                     )
             i['auts_affils'] = temp
+        # print(i['auts_id'])
+        # print(prof['scopus'])
+        # print('-----------------')
         if any(scop[0] in i['auts_id'] for scop in prof['scopus']):
             co_auts = [item for item in i['auts_id'] if item not in prof['scopus'][0]]
             for aut in co_auts:
@@ -93,6 +100,8 @@ for p, prof in profs.items():
                         'foreign'    : i['auts_affils'][idx]['foreign'],
                         'affils'     : i['auts_affils'][idx]['affils'],
                         'sharif'     : i['auts_affils'][idx]['sharif'],
+                        'email_year' : '',
+                        'email'      : '',
                     }
                 if i['year'] not in prof['co_auts'][aut].keys():
                     prof['co_auts'][aut][i['year']] = {'cnt': 0, 'doi': []}
@@ -102,13 +111,16 @@ for p, prof in profs.items():
                 prof['co_auts'][aut]['cnt'] += 1
                 prof['co_auts'][aut][i['year']]['cnt'] += 1
                 prof['co_auts'][aut][i['year']]['doi'].append(i['doi'])
+                if aut in emails.keys():
+                    prof['co_auts'][aut]['email_year'] = emails[aut]['year']
+                    prof['co_auts'][aut]['email'] = emails[aut]['email']
     # prof['co_auts'] = {k: v for k, v in prof['co_auts'].items() if v['cnt'] > 1}
-
-with io.open('co_aut.txt', 'w', encoding='UTF-16') as tsvfile:
+with io.open('co_aut1.txt', 'w', encoding='UTF-16') as tsvfile:
     header = [
         'First', 'Last', 'Init', 'i_last', 'Depts',
         'co_auts_id', 'Total', 'Name', 'Raw Affil', 'Multi Affil',
-        'Countries', 'Foreigner', 'Foreign Affil', 'Sharif', 'Years', 'DOIs',
+        'Countries', 'Foreigner', 'Foreign Affil', 'Sharif',
+        'email_year', 'Email', 'Years', 'DOIs',
     ]
     header = '\t'.join(header) + '\n'
     tsvfile.write(header)
@@ -122,7 +134,7 @@ with io.open('co_aut.txt', 'w', encoding='UTF-16') as tsvfile:
                 exp_list = [
                     i, aut['cnt'], aut['name'], aut['raw_affil'], aut['multi_affil'],
                     ';'.join(aut['countries']), aut['foreigner'], aut['foreign'],
-                    aut['sharif'],
+                    aut['sharif'], aut['email_year'], aut['email'],
                 ]
                 years = {k: v for k, v in aut.items() if '20' in k}
                 dois = [v['doi'] for k, v in years.items()]
