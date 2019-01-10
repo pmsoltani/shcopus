@@ -322,6 +322,67 @@ def corr_aut(corr_address: str, auts_affils: list):
     else:
         return ['NOT FOUND', -1]
 
+def paper_check(paper: OrderedDict):
+    # Extracting affiliations, Scopus author ids and author names
+    auts = splitter(
+        paper['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
+    auts_id = splitter(paper['auts_id'], ';', out_type='list')
+    auts_affils = splitter(paper['auts_affils'], ';', out_type='list')
+    
+    # Ignoring papers with too many authors involved!
+    if (
+        len(auts) > 30 or 
+        len(auts) != len(auts_id) or 
+        len(auts_affils) != len(auts_id)
+    ):
+        return []
+    return [auts, auts_id, auts_affils]
+
+def exp_emails(
+    db_name, threshold: int = 0, exp_name: str = 'corr_emails.txt'):
+    
+    if type(db_name) == str:
+        papers = db_handler(db_name, '', '', 2018)
+        db_handler(db_name, close=True)
+    else:
+        papers = db_name
+    
+    authors = {}
+    for i in papers:
+        paper_info = paper_check(i)
+        if paper_info:
+            [auts, auts_id, auts_affils] = paper_info
+        else:
+            continue
+        year = int(i['year'])
+        if year < threshold:
+            continue
+        
+        [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
+        if idx > -1:
+            aut_id = auts_id[idx]
+            if aut_id not in authors.keys():
+                authors[aut_id] = {
+                    'name': set(), 'year': 0, 'affil': '', 'email': '',
+                }
+            
+            authors[aut_id]['name'].add(auts[idx])
+            if year > authors[aut_id]['year']:
+                authors[aut_id]['year'] = year
+                authors[aut_id]['affil'] = auts_affils[idx]
+                authors[aut_id]['email'] = corr_email
+    if not exp_name:
+        return authors
+    
+    with io.open(exp_name, 'w', encoding = "UTF-16") as tsvfile:
+        tsvfile.write('Scopus ID\tName\tYear\tAffil\tEmail\n')
+        for k, v in authors.items():
+            exp_text = k + '\t'
+            exp_text += ';'.join(v['name']) + '\t' + str(v['year']) + '\t'
+            exp_text += v['affil'] + '\t' + v['email'] + '\n'
+
+            tsvfile.write(exp_text)
+
 
 
 def analyze_auts(
@@ -335,19 +396,10 @@ def analyze_auts(
     papers = db_handler(db_name, db_query_aut, year1, year2)
     for i in papers:
 
-        # Extracting affiliations, Scopus author ids and author names
-        i['affils'] = splitter(i['affils'], ';')
-        i['auts_id'] = splitter(i['auts_id'], ';', out_type='list')
-        i['auts'] = splitter(
-            i['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
-        auts_affils = splitter(i['auts_affils'], ';', out_type='list')
-        
-        # Ignoring papers with too many authors involved!
-        if len(i['auts']) > 30:
-            continue
-        if len(i['auts']) != len(i['auts_id']):
-            continue
-        if len(auts_affils) != len(i['auts_id']):
+        paper_info = paper_check(i)
+        if paper_info:
+            [auts_id, auts_affils] = paper_info[1:]
+        else:
             continue
         
         [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
@@ -378,7 +430,7 @@ def analyze_auts(
             temp[cnt] = {
                 'raw_affil': aut, 'init': '', 'last': '',
                 'sharif': False, 'faculty': False, 'sharif_id': [], 'depts': [],
-                'scopus_id': i['auts_id'][cnt],
+                'scopus_id': auts_id[cnt],
                 'multi_affil': False,  'affils': [], 'countries': [],
                 'foreign': False, 'foreigner': False,
                 'corr_aut': False, 'corr_email': '',
@@ -427,9 +479,9 @@ def analyze_auts(
                     temp[cnt]['sharif_id'] = sharif_id
                     temp[cnt]['faculty'] = True
                     try:
-                        datasets['faculties'][sharif_id]['scopus'][i['auts_id'][cnt]] += 1
+                        datasets['faculties'][sharif_id]['scopus'][auts_id[cnt]] += 1
                     except KeyError:
-                        datasets['faculties'][sharif_id]['scopus'][i['auts_id'][cnt]] = 1
+                        datasets['faculties'][sharif_id]['scopus'][auts_id[cnt]] = 1
                 elif len(set(sharif_id)) > 1: # Multiple matches for a faculty
                     temp[cnt]['sharif_id'] = 'MULTIPLE MATCHES'
                 else: # Could not match for a faculty
@@ -473,56 +525,3 @@ def analyze_auts(
                 else:
                     exp_text = k + '\t' + '' + '\n'
                 tsvfile.write(exp_text)
-
-def exp_emails(
-    db_name, threshold: int = 0, exp_name: str = 'corr_emails.txt'):
-    
-    if type(db_name) == str:
-        papers = db_handler(db_name, '', '', 2018, add_keys=[('skip', False)])
-        db_handler(db_name, close=True)
-    else:
-        papers = db_name
-    
-    authors = {}
-    for i in papers:
-        # Extracting affiliations, Scopus author ids and author names
-        auts_id = splitter(i['auts_id'], ';')
-        auts = splitter(
-            i['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
-        auts_affils = splitter(i['auts_affils'], ';', out_type='list')
-        
-        # Ignoring papers with too many authors involved!
-        if len(auts) > 30:
-            continue
-        if len(auts) != len(auts_id):
-            continue
-        if len(auts_affils) != len(auts_id):
-            continue
-        year = int(i['year'])
-        if year < threshold:
-            continue
-        
-        [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
-        if idx > -1:
-            aut_id = auts_id[idx]
-            if aut_id not in authors.keys():
-                authors[aut_id] = {
-                    'name': set(), 'year': 0, 'affil': '', 'email': '',
-                }
-            
-            authors[aut_id]['name'].add(auts[idx])
-            if year > authors[aut_id]['year']:
-                authors[aut_id]['year'] = year
-                authors[aut_id]['affil'] = auts_affils[idx]
-                authors[aut_id]['email'] = corr_email
-    if not exp_name:
-        return authors
-    
-    with io.open(exp_name, 'w', encoding = "UTF-16") as tsvfile:
-        tsvfile.write('Scopus ID\tName\tYear\tAffil\tEmail\n')
-        for k, v in authors.items():
-            exp_text = k + '\t'
-            exp_text += ';'.join(v['name']) + '\t' + str(v['year']) + '\t'
-            exp_text += v['affil'] + '\t' + v['email'] + '\n'
-
-            tsvfile.write(exp_text)
