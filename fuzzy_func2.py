@@ -6,8 +6,14 @@ import sqlite3
 import io
 import os
 from fuzzywuzzy import process
-
+# ------------------------------------------------------------------------------
 # variables, functions, and datasets
+
+# This dictionary is used to match and unify the name of the department/research
+# center/institute of authors who are affiliated with Sharif. For example,
+# regardless of how an author from electrical engineering has submitted his/her
+# department name (like school of electrical engineering, or electrical
+# engineering faculty), it will be changed to 'EE'
 sharif_depts = {
     'Electrical Engineering Department': 'EE',
     'Electrical Engineering School': 'EE',
@@ -75,11 +81,29 @@ sharif_depts = {
     'Institute of Water and Energy': 'IWE',
 }
 
+# This variable is used to detect the part of the affiliation string which
+# contains the name of the department of the author
 dept_alias = [
     'department', 'depatment', 'school', 'faculty', 'nanotechnology institut',
     'institute for nano', 'institution for nano', 'center'
 ]
 
+# There are many datasets used by the functions defined below. These include:
+#
+# A_HCI    : Contains a list of journal names that comprise the A&HCI index
+# ESCI     : Contains a list of journal names that comprise the ESCI index
+# SCIE     : Contains a list of journal names that comprise the SCIE index
+# SSCI     : Contains a list of journal names that comprise the SSCI index
+# JCR      : Contains a list of journal names that comprise the JCR list
+# QS**     : Lists of top 100/top 101-300 universities according to QS
+# Faculties: A complete list of all Sharif faculty members, which include their
+#            name in Farsi & English, contact info, email, and much more
+# Countries: A complete list of all countries in the world. For each country, it
+#            is specified whether the country is Islamic or not. Additional info
+#            can also be added, like the continent of each country ??
+
+# The code below tries to import these datasets. I still haven't find a way to
+# create a neat, short function that does the job
 dataset_extention = ['txt', 'csv']
 dataset_directory = 'datasets'
 datasets = {}
@@ -123,6 +147,8 @@ for file in os.listdir(dataset_directory):
                         datasets[db_name.lower()][row['ID']]['scopus'] = []
 
 def dict_factory(cursor, row):
+    
+    # This function is used to import data from SQL database as an OrderedDict
     key_map = {
         'Authors': 'auts', 'Author(s) ID': 'auts_id', 'Title': 'title',
         'Year': 'year', 'Source title': 'src', 'Volume': 'vol',
@@ -156,7 +182,17 @@ def dict_factory(cursor, row):
 def db_handler(
     db_name: str, db_query_aut: str = '', year1: int = 0, year2: int = 2018,
     add_keys: list = [], close: bool = False, factory = dict_factory):
-
+    
+    # This function can either import data from SQL database or close the
+    # connection made to it. Arguments:
+    #
+    # db_name     : Name of the '.db' file to import the data from or to close
+    # db_query_aut: Name of author to search for, can be left empty to find all
+    # year1       : Specifies the year that papers are published in or after
+    # year2       : Specifies the year that papers are published in or before
+    # add_keys    : The ability of adding arbitrary columns to the imported data
+    # close       : If true, the function will close the connection to database
+    # factory     : Specifies the method of import of data
     db = sqlite3.connect(db_name)
     if close:
         db.close()
@@ -164,7 +200,7 @@ def db_handler(
     
     db.row_factory = factory
     cursor = db.cursor()
-    if not year1:
+    if not year1: # Special case: import everything in the SQL database
         cursor.execute(
             '''SELECT * FROM papers WHERE Authors LIKE ?''', 
             ('%' + db_query_aut + '%',)
@@ -184,23 +220,41 @@ def db_handler(
                 i[tup[0]] = tup[1]
     return output
 
-def in_list(query, items_list, any_all, idx = False):
+def in_list(query, str_list, any_all, idx = False):
+    
+    # On many occasions, the algorithm needs to check whether a string is part
+    # of any/all strings in a list and to return the position. Arguments:
+    #
+    # query   : The string that we want to find in other strings
+    # str_list: A list of strings that we search for the query in
+    # any_all : Can either by 'any' or 'all' which tells how to search for query
+    # idx     : If true, makes the function to return the position of query
+    #           inside the str_list. Returns -1 if not found.
     if idx and any_all == 'all':
         return
     elif idx and any_all == 'any':
-        for cnt, item in enumerate(items_list):
+        for cnt, item in enumerate(str_list):
             if query in item:
                 return [True, cnt]
         return [False, -1]
     elif not idx and any_all == 'any':
-        return any(query in item for item in items_list)
+        return any(query in item for item in str_list)
     elif not idx and any_all == 'all':
-        return all(query in item for item in items_list)
+        return all(query in item for item in str_list)
 
 def splitter(
     string: str, split_char: str, out_type: str = 'ordd',
     strip: bool = True, vacuum = ''):
-
+    
+    # The raw data the database are long strings joined by characters like ';'
+    # To analyze the data, we need to separate and clean different chunks of
+    # these strings, which is the use case of this function. Arguments:
+    #
+    # string    : Raw string to be divided and cleaned
+    # split_char: The charater by which we split the raw string
+    # out_type  : Tells the function to return an OrderedDict or a list
+    # strip     : If true, trims the white spaces from around each chunk
+    # vacuum    : A function that performs additional process on each chunk
     if vacuum == '':
         vacuum = lambda item: item
     ls = string.split(split_char)
@@ -212,12 +266,63 @@ def splitter(
         output = [item.strip() for item in ls if vacuum(item)]
     return output
 
+def paper_check(paper: OrderedDict, auts_count: int = 30):
+    
+    # Extract information such as author name, id, and affiliation from each
+    # paper and then performs common checks to see if the paper is ok for
+    # inspection or not. Arguments:
+    # 
+    # paper     : An OrderedDict containing all the information for a paper
+    # auts_count: Specifies the maximum number of authors per paper. If  more,
+    #             ignore the paper
+    
+    # Extracting affiliations, Scopus author ids and author names
+    # Usually author names are longer than 3 characters (last + ' ' + initial)
+    auts = splitter(
+        paper['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
+    auts_id = splitter(paper['auts_id'], ';', out_type='list')
+    auts_affils = splitter(paper['auts_affils'], ';', out_type='list')
+    
+    # Ignoring papers with too many authors involved!
+    if (
+        len(auts) > auts_count or 
+        len(auts) != len(auts_id) or 
+        len(auts_affils) != len(auts_id)
+    ):
+        return []
+    return [auts, auts_id, auts_affils]
+
 def aut_country (
     raw_affil: list, country_data: dict,
     start_idx: int = 2, end_idx: int = None,
     home = 'IR', home_aliases = ['tehran', 'sharif'],
     ignore = ['department', 'university', 'institut', 'center', 'school']):
     
+    # This function receives a string of affiliation and from it, determines:
+    #
+    # - The author's country (using 'Countries' dataset)
+    # - Whether the author has multiple affiliations (by checking if there are
+    #   more than 1 country names in the affiliation)
+    # - If the author is a 'foreigner' (meaning he/she isn't affiliation with
+    #   the 'home' country)
+    # - If the author has any foreign affiliation
+    # 
+    # The function also returns a list of affiliations if there are more than 1.
+    # Arguments:
+    #
+    # raw_affil   : A string containing the raw affiliation of the author
+    # country_data: The 'Countries' dataset
+    # start_idx   : Usually, the first 2 parts of the affiliation string is the
+    #               author's name, so we ignore it and check from the 3rd place
+    # end_idx     : Not used ??
+    # home        : Used to determine 'foreign' countries. If we consider Sharif
+    #               University, 'home' will be 'IR' and so an author with other
+    #               countries in his/her string will have foreign affiliation
+    # home_aliases: A list of popular names that indicate the country of the
+    #               author, if the country name is not in the string.
+    # ignore      : A list of popular names for department/university/etc that
+    #               makes the function ignore the chunk of text containing it
+    #               to find better results
     countries = []
     multi_affil = False
     foreigner = False
@@ -229,27 +334,31 @@ def aut_country (
         if (
             in_list(elem, country_data.keys(), 'any') and
             all(ign not in elem for ign in ignore) and
-            (
+            (# country names usually have more than 3 characters except these:
                 elem.lower() in ['usa', 'uk', 'uae'] or
                 len(elem) > 3
             )
-        ):
+        ):  # we don't use fuzzy match for country names for improved accuracy
             country_idx = in_list(elem, country_data.keys(), 'any', True)[1]
             country_idx = list(country_data.keys())[country_idx]
             countries.append(country_data[country_idx]['id'])
             
+            # when a country name is found, continue with the rest of the string
             affils.append(raw_affil[position:start_idx + cnt + 1])
             position = start_idx + cnt + 1
 
     if len(countries) > 1:
         multi_affil = True
-
+    
+    # If 'home' not found in countries, the author is a foreigner
     if (not set(countries) & {home}) and (set(countries)):
         foreigner = True
         foreign = True
+    # Author might not be a foreigner, but have foreign affiliation regardless
     elif set(countries) - {home}:
         foreign = True
-
+    
+    # If no country found, use 'home_aliases' to detect if author is domestic
     if not countries:
         for alias in home_aliases:
             if in_list(alias, raw_affil[start_idx:end_idx], 'any'):
@@ -264,19 +373,32 @@ def aut_dept(
     affils: list, dept_alias: list, sharif_depts: dict,
     cutoff: int, keyword: str = 'sharif'):
 
-    # if 'sharif' in any affiliation, aut is Sharifi
-    # we can also check to see whether aut's other affils are sharif or not
+    # After determining the author's country, it's time to detect if he/she is
+    # from the institution that we try to analyze or not (in this case 'Sharif')
+    # If author is from Sharif, we the proceed to find out which department.
+    # Note that an author with multiple affiliations could have some but not all
+    # of his/her affiliations with Sharif. Argument:
+    #
+    # affils      : A list of affiliations for each author, from aut_country()
+    # dept_alias  : A list of common names for department/research center/etc.
+    # sharif_depts: A dictionary that maps common names for Sharif department to
+    #               Their abbreviations
+    # cutoff      : An integer which tells the fuzzywuzzy package how good a
+    #               match we are looking for (higher means better, 100 maximum)
+    # keyword     : A word that determines if the author is from our institute
+
     has_keyword = False
     depts = []
     
     keyword = keyword.lower()
     for cnt, affil in enumerate(affils):
-        depts.append({'sharif': False, 'dept': ''})
+        depts.append({keyword: False, 'dept': ''})
         if in_list(keyword, affil, 'any'):
             has_keyword = True
             depts[cnt][keyword] = True
-            for elem in affil:
+            for elem in affil: # now we search for the department
                 if any(item in elem.lower() for item in dept_alias):
+                    # department found, now we match it with sharif_depts
                     match = process.extractOne(
                         elem.strip(),
                         list(sharif_depts.keys()),
@@ -293,15 +415,33 @@ def aut_dept(
             depts[cnt]['dept'] = 'NOT ' + keyword.upper()
     return [has_keyword, depts]
 
-def aut_match(query: str, auts_dict: dict, key: str, cutoff: int):
-    auts_list = [auts_dict[k][key] for k in auts_dict]
+def aut_match(query: str, dept_profs: dict, key: str, cutoff: int):
+    
+    # After determining the department authors affiliated with Sharif, we then
+    # proceed to check whether he/she is a faculty member. For that, we have a
+    # list of Sharif faculties and we extract those that are in the same
+    # department with the current author to improve the results. Arguments:
+    # 
+    # query     : Name of the author in the format:
+    #             initial + last name (J. Smith)
+    # dept_profs: A subset of all faculty members that have the same department
+    #             as the author
+    # key       : Name of the key in the dept_profs that have the names of
+    #             faculties in a format like query (i + last)
+    # cutoff    : An integer which tells the fuzzywuzzy package how good a
+    #             match we are looking for (higher means better, 100 maximum)
+    auts_list = [dept_profs[k][key] for k in dept_profs]
     match = process.extractOne(query, auts_list, score_cutoff=cutoff)
     if match:
-        return [k for k in auts_dict if auts_dict[k][key] == match[0]][0]
+        return [k for k in dept_profs if dept_profs[k][key] == match[0]][0]
     else:
         return 'NOT MATCHED'
 
 def corr_aut(corr_address: str, auts_affils: list):
+    
+    # This function is used to extract and clean ?? the email address of the
+    # corresponding author of each paper (if there are any). If found, we match
+    # it to one of the authors in the paper, if not retrun -1
     if 'email: ' in corr_address.lower() and ';' in corr_address:
         name = corr_address.split(';')[0]
         email = corr_address.lower().split('email: ')[1].strip()
@@ -317,25 +457,19 @@ def corr_aut(corr_address: str, auts_affils: list):
     else:
         return ['NOT FOUND', -1]
 
-def paper_check(paper: OrderedDict):
-    # Extracting affiliations, Scopus author ids and author names
-    auts = splitter(
-        paper['auts'], ',', vacuum=lambda item: len(item.strip()) > 3)
-    auts_id = splitter(paper['auts_id'], ';', out_type='list')
-    auts_affils = splitter(paper['auts_affils'], ';', out_type='list')
-    
-    # Ignoring papers with too many authors involved!
-    if (
-        len(auts) > 30 or 
-        len(auts) != len(auts_id) or 
-        len(auts_affils) != len(auts_id)
-    ):
-        return []
-    return [auts, auts_id, auts_affils]
-
 def exp_emails(
-    db_name, threshold: int = 0, exp_name: str = 'corr_emails.txt'):
+    db_name, cutoff: int = 0, exp_name: str = 'corr_emails.txt'):
     
+    # This function loops through all papers and extracts the email addresses
+    # using corr_aut(). It can then save the results to a file or return a
+    # dictionary. Arguments:
+    #
+    # db_name : The name of database file, or the 'already imported database'
+    # cutoff  : Sometimes author's change their institute and so old emails
+    #           might not be valid anymore. This arguments tells the function
+    #           to ignore emails from papers that are published before a
+    #           certain year. If 0, extracts all emails.
+    # exo_name: Name of the export file. If empty, function will return a dict
     if type(db_name) == str:
         papers = db_handler(db_name, '', '', 2018)
         db_handler(db_name, close=True)
@@ -350,7 +484,7 @@ def exp_emails(
         else:
             continue
         year = int(i['year'])
-        if year < threshold:
+        if year < cutoff:
             continue
         
         [corr_email, idx] = corr_aut(i['corr_address'], auts_affils)
@@ -382,6 +516,7 @@ def analyze_auts(
     exp_name: str = 'scopus_ids.txt',
     filtered_export: bool = True, threshold: int = 5):
     
+    # ??
     if new_count:
         for i in datasets['faculties']:
             datasets['faculties'][i]['scopus'] = {}
@@ -461,11 +596,11 @@ def analyze_auts(
                 i_last = temp[cnt]['init'] + ' ' + temp[cnt]['last']
                 for dept in temp[cnt]['depts']:
                     if not 'NOT' in dept['dept']:
-                        auts_dict = {
+                        dept_profs = {
                             k: v for k, v in datasets['faculties'].items() 
                             if dept['dept'] in v['depts']
                         }
-                        match = aut_match(i_last, auts_dict, 'i_last', 90)
+                        match = aut_match(i_last, dept_profs, 'i_last', 90)
                         if match != 'NOT MATCHED':
                             sharif_id.append(match)
                 if len(set(sharif_id)) == 1: # Faculty matched correctly
@@ -524,11 +659,12 @@ def analyze_co_auts(
     db_query_aut: str, year1: int, year2: int, db_name: str, datasets,
     dept_alias, sharif_depts, cutoff: int = 80, exp_name: str = 'co_aut.txt'):
     
+    # ??
     papers = db_handler(
         db_name, db_query_aut, year1, year2, add_keys=[('skip', False)])
     db_handler(db_name, close=True)
 
-    emails = exp_emails(papers, threshold=0, exp_name='')
+    emails = exp_emails(papers, cutoff=0, exp_name='')
 
     for p, prof in datasets['faculties'].items():
         if not prof['scopus']:
